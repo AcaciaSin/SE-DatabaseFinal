@@ -1,0 +1,3 @@
+src/*.o
+src/run
+src/result/B_tree
