@@ -8,7 +8,7 @@ CPPFLAGS=-w
 .PHONY: clean
 
 all: ${OBJS}
-	${CXX} ${CPPFLAGS} -o run ${OBJS}
+	${CXX} ${CPPFLAGS} -o ../run ${OBJS}
 
 random.o: random.h
 

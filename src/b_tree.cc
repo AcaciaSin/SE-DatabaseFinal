@@ -95,21 +95,6 @@ int BTree::bulkload(      // bulkload a tree from memory
     int n,                // number of entries
     const Result *table)  // hash table
 {
-  BIndexNode *index_child = NULL;
-  BIndexNode *index_prev_nd = NULL;
-  BIndexNode *index_act_nd = NULL;
-  BLeafNode *leaf_child = NULL;
-  BLeafNode *leaf_prev_nd = NULL;
-  BLeafNode *leaf_act_nd = NULL;
-
-  int id = -1;
-  int block = -1;
-  float key = MINREAL;
-
-  // -------------------------------------------------------------------------
-  //  build leaf node from <_hashtable> (level = 0)
-  // -------------------------------------------------------------------------
-  bool first_node = true;  // determine relationship of sibling
   int start_block = 1;     // position of first node, always be 1
   int end_block = 0;       // position of last node
 
@@ -161,14 +146,15 @@ int BTree::bulkload(      // bulkload a tree from memory
 
             if (isFirst) {
               isFirst = false;
-              if (lastBlockIndex >= 0) {
+              if (lastBlockIndex > 0) {
                 leafNode->set_left_sibling(lastBlockIndex);
               }
+              leafNode->set_block(lastBlockIndex + entryIndex + 1);
               prev = leafNode;
             } else {
+              leafNode->set_block(lastBlockIndex + entryIndex + 1);
               leafNode->set_left_sibling(prev->get_block());
               prev->set_right_sibling(leafNode->get_block());
-              prev->set_block(lastBlockIndex + entryIndex);
               prev->write_to_buffer(data + (entryIndex - 1) *
                                                tree->file_->get_blocklength());
               delete prev;
@@ -240,6 +226,30 @@ int BTree::bulkload(      // bulkload a tree from memory
     thread.join();
   }
 
+  workerThreads.clear();
+
+  load_index_layers(start_block, end_block);
+
+  return 0;
+}
+
+void BTree::load_index_layers(int start_block, int end_block) {
+  BIndexNode *index_child = NULL;
+  BIndexNode *index_prev_nd = NULL;
+  BIndexNode *index_act_nd = NULL;
+  BLeafNode *leaf_child = NULL;
+  BLeafNode *leaf_prev_nd = NULL;
+  BLeafNode *leaf_act_nd = NULL;
+
+  int id = -1;
+  int block = -1;
+  float key = MINREAL;
+
+  // -------------------------------------------------------------------------
+  //  build leaf node from <_hashtable> (level = 0)
+  // -------------------------------------------------------------------------
+  bool first_node = true;  // determine relationship of sibling
+  
   // -------------------------------------------------------------------------
   //  stop condition: lastEndBlock == lastStartBlock (only one node, as root)
   // -------------------------------------------------------------------------
@@ -311,8 +321,6 @@ int BTree::bulkload(      // bulkload a tree from memory
   if (leaf_prev_nd != NULL) delete leaf_prev_nd;
   if (leaf_act_nd != NULL) delete leaf_act_nd;
   if (leaf_child != NULL) delete leaf_child;
-
-  return 0;
 }
 
 // -----------------------------------------------------------------------------

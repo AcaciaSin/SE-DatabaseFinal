@@ -44,6 +44,8 @@ public:
 		const Result *table);			// hash table
 
 protected:
+	void load_index_layers(int start_block, int end_block);
+
 	// -------------------------------------------------------------------------
 	inline int read_header(const char *buf) { // read <root> from buffer
 		memcpy(&root_, buf, SIZEINT);
