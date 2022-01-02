@@ -203,6 +203,18 @@ bool BlockFile::write_block(		// write a <block> into <index>
 	return true;
 }
 
+int BlockFile::write_blocks(char *data, int count, int index) {
+  fseek(fp_, 0, SEEK_END);
+  fwrite(data, block_length_ * count, 1, fp_);
+  num_blocks_ += count;
+
+  fseek(fp_, SIZEINT, SEEK_SET);  // <fp_> point to pos of header
+  fwrite_number(num_blocks_);     // update <num_blocks_>
+
+  fseek(fp_, -block_length_, SEEK_END);
+  return (act_block_ = num_blocks_) - 1;
+}
+
 // -----------------------------------------------------------------------------
 //  append a new block at the end of file (out of the range of <num_blocks_>).
 //  the file pointer is pointed to the new appended block and return its pos.

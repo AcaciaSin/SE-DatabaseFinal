@@ -1,5 +1,11 @@
 #include "b_tree.h"
 
+#include <chrono>
+#include <memory>
+#include <queue>
+#include <thread>
+#include <tuple>
+
 // -----------------------------------------------------------------------------
 //  BTree: b-tree to index hash values produced by qalsh
 // -----------------------------------------------------------------------------
@@ -85,132 +91,228 @@ void BTree::init_restore(			// load the tree from a tree file
 }
 
 // -----------------------------------------------------------------------------
-int BTree::bulkload(				// bulkload a tree from memory
-	int   n,							// number of entries
-	const Result *table)				// hash table
+int BTree::bulkload(      // bulkload a tree from memory
+    int n,                // number of entries
+    const Result *table)  // hash table
 {
-	BIndexNode *index_child   = NULL;
-	BIndexNode *index_prev_nd = NULL;
-	BIndexNode *index_act_nd  = NULL;
-	BLeafNode  *leaf_child    = NULL;
-	BLeafNode  *leaf_prev_nd  = NULL;
-	BLeafNode  *leaf_act_nd   = NULL;
+  BIndexNode *index_child = NULL;
+  BIndexNode *index_prev_nd = NULL;
+  BIndexNode *index_act_nd = NULL;
+  BLeafNode *leaf_child = NULL;
+  BLeafNode *leaf_prev_nd = NULL;
+  BLeafNode *leaf_act_nd = NULL;
 
-	int   id    = -1;
-	int   block = -1;
-	float key   = MINREAL;
+  int id = -1;
+  int block = -1;
+  float key = MINREAL;
 
-	// -------------------------------------------------------------------------
-	//  build leaf node from <_hashtable> (level = 0)
-	// -------------------------------------------------------------------------
-	bool first_node  = true;		// determine relationship of sibling
-	int  start_block = 0;			// position of first node
-	int  end_block   = 0;			// position of last node
+  // -------------------------------------------------------------------------
+  //  build leaf node from <_hashtable> (level = 0)
+  // -------------------------------------------------------------------------
+  bool first_node = true;  // determine relationship of sibling
+  int start_block = 1;     // position of first node, always be 1
+  int end_block = 0;       // position of last node
 
-	for (int i = 0; i < n; ++i) {
-		id  = table[i].id_;
-		key = table[i].key_;
+  const auto workerThreadsCount = std::thread::hardware_concurrency() - 1;
+  assert(workerThreadsCount >= 1);
+  std::vector<std::thread> workerThreads;
 
-		if (!leaf_act_nd) {
-			leaf_act_nd = new BLeafNode();
-			leaf_act_nd->init(0, this);
+  const auto headerSize = SIZECHAR + SIZEINT * 3;
+  const auto keySize =
+      ((int)ceil((float)file_->get_blocklength() / LEAF_NODE_SIZE) * SIZEFLOAT +
+       SIZEINT);
+  const auto entrySize = SIZEINT;
+  const auto treeNodesCapacity =
+      (file_->get_blocklength() - headerSize - keySize) / entrySize;
+  const auto leafNodesCount = (int)ceil((double)n / treeNodesCapacity);
+  const auto bound = leafNodesCount / workerThreadsCount;
+  auto lock = std::make_unique<SpinLock>();
+  auto tree = this;
 
-			if (first_node) {
-				first_node  = false; // init <start_block>
-				start_block = leaf_act_nd->get_block();
-			}
-			else {					// label sibling
-				leaf_act_nd->set_left_sibling(leaf_prev_nd->get_block());
-				leaf_prev_nd->set_right_sibling(leaf_act_nd->get_block());
+  using Tuple = std::tuple<int, BLeafNode *>;
+  const auto compare = [](const Tuple &a, const Tuple &b) {
+    return std::get<0>(a) > std::get<0>(b);
+  };
+  std::priority_queue<Tuple, std::vector<Tuple>, decltype(compare)> heap(
+      compare);
 
-				delete leaf_prev_nd; leaf_prev_nd = NULL;
-			}
-			end_block = leaf_act_nd->get_block();
-		}							
-		leaf_act_nd->add_new_child(id, key); // add new entry
+  auto consumerThread =
+      std::thread([&lock, &heap, tree, &end_block, &leafNodesCount, n] {
+        int processedNodes = 0;
+        int lastLeafIndex = -1;
+        int lastBlockIndex = 0;  // 这里的情况和 start_block = 1 的原因一样，file_ 里第一个 block 一定是树根节点
 
-		if (leaf_act_nd->isFull()) {// change next node to store entries
-			leaf_prev_nd = leaf_act_nd;
-			leaf_act_nd  = NULL;
-		}
-	}
-	if (leaf_prev_nd != NULL) {
-		delete leaf_prev_nd; leaf_prev_nd = NULL;
-	}
-	if (leaf_act_nd != NULL) {
-		delete leaf_act_nd; leaf_act_nd = NULL;
-	}
+        while (processedNodes < leafNodesCount) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-	// -------------------------------------------------------------------------
-	//  stop condition: lastEndBlock == lastStartBlock (only one node, as root)
-	// -------------------------------------------------------------------------
-	int current_level    = 1;		// current level (leaf level is 0)
-	int last_start_block = start_block;	// build b-tree level by level
-	int last_end_block   = end_block;	// build b-tree level by level
+          lock->lock();
+          const auto heapSize = heap.size();
+          char *data = new char[heapSize * tree->file_->get_blocklength()];
+          bool isFirst = true;
+          int entryIndex = 0;
+          BLeafNode *prev;
+          while (!heap.empty()) {
+            auto [leafIndex, leafNode] = heap.top();
+            if (leafIndex != lastLeafIndex + 1) {
+              break;
+            }
+            lastLeafIndex = leafIndex;
+            processedNodes++;
 
-	while (last_end_block > last_start_block) {
-		first_node = true;
-		for (int i = last_start_block; i <= last_end_block; ++i) {
-			block = i;				// get <block>
-			if (current_level == 1) {
-				leaf_child = new BLeafNode();
-				leaf_child->init_restore(this, block);
-				key = leaf_child->get_key_of_node();
+            if (isFirst) {
+              isFirst = false;
+              if (lastBlockIndex >= 0) {
+                leafNode->set_left_sibling(lastBlockIndex);
+              }
+              prev = leafNode;
+            } else {
+              leafNode->set_left_sibling(prev->get_block());
+              prev->set_right_sibling(leafNode->get_block());
+              prev->set_block(lastBlockIndex + entryIndex);
+              prev->write_to_buffer(data + (entryIndex - 1) *
+                                               tree->file_->get_blocklength());
+              delete prev;
+              prev = leafNode;
+            }
 
-				delete leaf_child; leaf_child = NULL;
-			}
-			else {
-				index_child = new BIndexNode();
-				index_child->init_restore(this, block);
-				key = index_child->get_key_of_node();
+            entryIndex++;
+            heap.pop();
+          }
+          lock->unlock();
 
-				delete index_child; index_child = NULL;
-			}
+          if (!entryIndex) {
+            continue;
+          }
 
-			if (!index_act_nd) {
-				index_act_nd = new BIndexNode();
-				index_act_nd->init(current_level, this);
+          prev->set_block(lastBlockIndex + entryIndex);
+          end_block = prev->get_block();
+          if (end_block > n) {
+            throw;
+          }
+          if (processedNodes < leafNodesCount) {
+            prev->set_right_sibling(lastBlockIndex + entryIndex + 1);
+          }
+          prev->write_to_buffer(data + (entryIndex - 1) *
+                                           tree->file_->get_blocklength());
+          delete prev;
+          prev = nullptr;
 
-				if (first_node) {
-					first_node = false;
-					start_block = index_act_nd->get_block();
-				}
-				else {
-					index_act_nd->set_left_sibling(index_prev_nd->get_block());
-					index_prev_nd->set_right_sibling(index_act_nd->get_block());
+          // 这里写入的大小不是 heapSize 而是 entryIndex
+          lastBlockIndex =
+              tree->file_->write_blocks(data, entryIndex, lastBlockIndex);
+          delete[] data;
+          data = nullptr;
+        }
+      });
 
-					delete index_prev_nd; index_prev_nd = NULL;
-				}
-				end_block = index_act_nd->get_block();
-			}						
-			index_act_nd->add_new_child(key, block); // add new entry
+  for (int i = 0; i < workerThreadsCount; i++) {
+    workerThreads.emplace_back(std::thread(
+        [=, &lock, &heap](int id) {
+          for (int h = 0; h <= bound; h++) {
+            auto leafIndex = id + h * workerThreadsCount;
+            if (leafIndex >= leafNodesCount) {
+              continue;
+            }
+            auto leafNode = new BLeafNode();
+            leafNode->init(0, tree);
+            for (int k = 0; k < treeNodesCapacity; k++) {
+              auto index = leafIndex * treeNodesCapacity + k;
+              if (index >= n) {
+                break;
+              }
+              auto id = table[index].id_;
+              auto key = table[index].key_;
+              leafNode->add_new_child(id, key);
+              if (k < treeNodesCapacity - 1) {
+                assert(!leafNode->isFull());
+              }
+            }
+            lock->lock();
+            heap.emplace(std::make_tuple(leafIndex, leafNode));
+            lock->unlock();
+          }
+        },
+        i));
+  }
 
-			if (index_act_nd->isFull()) {
-				index_prev_nd = index_act_nd;
-				index_act_nd = NULL;
-			}
-		}
-		if (index_prev_nd != NULL) {// release the space
-			delete index_prev_nd; index_prev_nd = NULL;
-		}
-		if (index_act_nd != NULL) {
-			delete index_act_nd; index_act_nd = NULL;
-		}
-		
-		last_start_block = start_block;// update info
-		last_end_block = end_block;	// build b-tree of higher level
-		++current_level;
-	}
-	root_ = last_start_block;		// update the <root>
+  consumerThread.join();
+  for (auto &thread : workerThreads) {
+    thread.join();
+  }
 
-	if (index_prev_nd != NULL) delete index_prev_nd; 
-	if (index_act_nd  != NULL) delete index_act_nd;
-	if (index_child   != NULL) delete index_child;
-	if (leaf_prev_nd  != NULL) delete leaf_prev_nd; 
-	if (leaf_act_nd   != NULL) delete leaf_act_nd; 	
-	if (leaf_child    != NULL) delete leaf_child; 
+  // -------------------------------------------------------------------------
+  //  stop condition: lastEndBlock == lastStartBlock (only one node, as root)
+  // -------------------------------------------------------------------------
+  int current_level = 1;               // current level (leaf level is 0)
+  int last_start_block = start_block;  // build b-tree level by level
+  int last_end_block = end_block;      // build b-tree level by level
 
-	return 0;
+  while (last_end_block > last_start_block) {
+    first_node = true;
+    for (int i = last_start_block; i <= last_end_block; ++i) {
+      block = i;  // get <block>
+      if (current_level == 1) {
+        leaf_child = new BLeafNode();
+        leaf_child->init_restore(this, block);
+        key = leaf_child->get_key_of_node();
+
+        delete leaf_child;
+        leaf_child = NULL;
+      } else {
+        index_child = new BIndexNode();
+        index_child->init_restore(this, block);
+        key = index_child->get_key_of_node();
+
+        delete index_child;
+        index_child = NULL;
+      }
+
+      if (!index_act_nd) {
+        index_act_nd = new BIndexNode();
+        index_act_nd->init(current_level, this);
+
+        if (first_node) {
+          first_node = false;
+          start_block = index_act_nd->get_block();
+        } else {
+          index_act_nd->set_left_sibling(index_prev_nd->get_block());
+          index_prev_nd->set_right_sibling(index_act_nd->get_block());
+
+          delete index_prev_nd;
+          index_prev_nd = NULL;
+        }
+        end_block = index_act_nd->get_block();
+      }
+      index_act_nd->add_new_child(key, block);  // add new entry
+
+      if (index_act_nd->isFull()) {
+        index_prev_nd = index_act_nd;
+        index_act_nd = NULL;
+      }
+    }
+    if (index_prev_nd != NULL) {  // release the space
+      delete index_prev_nd;
+      index_prev_nd = NULL;
+    }
+    if (index_act_nd != NULL) {
+      delete index_act_nd;
+      index_act_nd = NULL;
+    }
+
+    last_start_block = start_block;  // update info
+    last_end_block = end_block;      // build b-tree of higher level
+    ++current_level;
+  }
+  root_ = last_start_block;  // update the <root>
+
+  if (index_prev_nd != NULL) delete index_prev_nd;
+  if (index_act_nd != NULL) delete index_act_nd;
+  if (index_child != NULL) delete index_child;
+  if (leaf_prev_nd != NULL) delete leaf_prev_nd;
+  if (leaf_act_nd != NULL) delete leaf_act_nd;
+  if (leaf_child != NULL) delete leaf_child;
+
+  return 0;
 }
 
 // -----------------------------------------------------------------------------

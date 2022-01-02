@@ -84,6 +84,8 @@ public:
 		Block block,					// a block
 		int   index);					// pos of the block
 
+	int write_blocks(char *data, int count, int index);
+
 	// -------------------------------------------------------------------------
 	int append_block(				// append a block at the end of file
 		Block block);					// a block

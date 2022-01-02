@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -27,6 +28,23 @@ extern float    g_ratio;			// global parameter: overall ratio
 extern float    g_recall;			// global parameter: recall
 extern uint64_t g_io;				// global parameter: i/o operations
 extern uint64_t g_memory;			// global parameter: memory usage
+
+struct SpinLock {
+  void lock() {
+    for (;;) {
+      if (!lock_.exchange(true, std::memory_order_acquire)) {
+        break;
+      }
+      while (lock_.load(std::memory_order_relaxed))
+        ;
+    }
+  }
+
+  void unlock() { lock_.store(false, std::memory_order_release); }
+
+ private:
+  std::atomic<bool> lock_ = {false};
+};
 
 // -------------------------------------------------------------------------
 void create_dir(					// create directory

@@ -293,15 +293,6 @@ BLeafNode::BLeafNode()				// constructor
 // -----------------------------------------------------------------------------
 BLeafNode::~BLeafNode()				// destructor
 {
-	if (dirty_) {					// if dirty, rewrite to disk
-		int  block_length = btree_->file_->get_blocklength();
-		char *buf = new char[block_length];
-		write_to_buffer(buf);
-		btree_->file_->write_block(buf, block_);
-
-		delete[] buf; buf = NULL;
-	}
-	
 	if (key_ != NULL) {
 		delete[] key_; key_ = NULL;
 	}
@@ -344,10 +335,6 @@ void BLeafNode::init(				// init a new node, which not exist
 	}
 	id_ = new int[capacity_];
 	memset(id_, -1, capacity_ * SIZEINT);
-
-	char *blk = new char[b_length];
-	block_ = btree_->file_->append_block(blk);
-	delete[] blk; blk = NULL;
 }
 
 // -----------------------------------------------------------------------------

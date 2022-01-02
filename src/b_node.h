@@ -54,6 +54,8 @@ public:
 	// -------------------------------------------------------------------------
 	inline int get_block() { return block_; }
 
+	inline void set_block(int block) { block_ = block; }
+
 	// -------------------------------------------------------------------------
 	inline int get_num_entries() { return num_entries_; }
 
