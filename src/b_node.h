@@ -114,9 +114,18 @@ public:
 		int   level,					// level (depth) in b-tree
 		BTree *btree);					// b-tree of this node
 
+	virtual void init_no_write(
+		int   level,
+		BTree *btree);
+
 	virtual void init_restore(		// load an exist node from disk to init
 		BTree *btree,					// b-tree of this node
 		int   block);					// address of file of this node
+
+	virtual void init_restore_in_place(
+		BTree *btree,
+		int block,
+		Block data);
 
 	// -------------------------------------------------------------------------
 	virtual void read_from_buffer(	// read a b-node from buffer
@@ -156,6 +165,10 @@ public:
 		float key,						// input key
 		int son);						// input son
 
+	void add_new_child_no_dirty(
+		float key,
+		int son);
+
 protected:
 	int *son_;						// addr of son node
 };
@@ -177,6 +190,11 @@ public:
 	virtual void init_restore(		// load an exist node from disk to init
 		BTree *btree,					// b-tree of this node
 		int   block);					// address of file of this node
+
+	virtual void init_restore_in_place(
+		BTree *btree,
+		int block,
+		Block data);
 
 	// -------------------------------------------------------------------------
 	virtual void read_from_buffer(	// read a b-node from buffer

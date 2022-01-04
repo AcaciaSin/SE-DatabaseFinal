@@ -78,6 +78,11 @@ public:
 	bool read_block(				// read a block <b> in the <pos>
 		Block block,					// a block
 		int   index);					// pos of the block
+	
+	bool read_blocks(
+		char *data,
+		int index,
+		int n);
 
 	// -------------------------------------------------------------------------
 	bool write_block(				// write a block <b> in the <pos>

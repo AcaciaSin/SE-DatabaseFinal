@@ -179,6 +179,21 @@ bool BlockFile::read_block(			// read a <block> from <index>
 	return true;
 }
 
+bool BlockFile::read_blocks(char *data, int index, int n) {
+	index += n;
+	seek_block(index);
+
+	get_bytes(data, block_length_ * n);
+	if (index + n > num_blocks_) {
+		fseek(fp_, 0, SEEK_SET);
+		act_block_ = 0;
+	}
+	else {
+		act_block_ = index + n;
+	}
+	return true;	
+}
+
 // -----------------------------------------------------------------------------
 //  note that this function can ONLY write to an already "allocated" block (in 
 //  the range of <num_blocks>).

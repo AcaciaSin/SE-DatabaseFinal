@@ -234,93 +234,217 @@ int BTree::bulkload(      // bulkload a tree from memory
 }
 
 void BTree::load_index_layers(int start_block, int end_block) {
-  BIndexNode *index_child = NULL;
-  BIndexNode *index_prev_nd = NULL;
-  BIndexNode *index_act_nd = NULL;
-  BLeafNode *leaf_child = NULL;
-  BLeafNode *leaf_prev_nd = NULL;
-  BLeafNode *leaf_act_nd = NULL;
-
-  int id = -1;
-  int block = -1;
-  float key = MINREAL;
-
-  // -------------------------------------------------------------------------
-  //  build leaf node from <_hashtable> (level = 0)
-  // -------------------------------------------------------------------------
-  bool first_node = true;  // determine relationship of sibling
-  
-  // -------------------------------------------------------------------------
-  //  stop condition: lastEndBlock == lastStartBlock (only one node, as root)
-  // -------------------------------------------------------------------------
   int current_level = 1;               // current level (leaf level is 0)
   int last_start_block = start_block;  // build b-tree level by level
   int last_end_block = end_block;      // build b-tree level by level
 
+  // const auto workerThreadsCount = std::thread::hardware_concurrency() - 1;
+  const auto workerThreadsCount = 1;
+  assert(workerThreadsCount >= 1);
+  const auto headerSize = SIZECHAR + SIZEINT * 3;
+  const auto entrySize = SIZEFLOAT + SIZEINT;
+  // 每一层需要扫描的 block 总数
+  const auto totalBlocksCount = last_end_block - last_start_block;
+  // 一个 index node 的容量
+  const auto nodeCapacity = (file_->get_blocklength() - headerSize) / entrySize;
+  // 每一层要构建的 index node 总数
+  const auto todoNodesCount =
+      (int)ceil((double)totalBlocksCount / nodeCapacity);
+
   while (last_end_block > last_start_block) {
-    first_node = true;
-    for (int i = last_start_block; i <= last_end_block; ++i) {
-      block = i;  // get <block>
-      if (current_level == 1) {
-        leaf_child = new BLeafNode();
-        leaf_child->init_restore(this, block);
-        key = leaf_child->get_key_of_node();
+    auto lock = std::make_unique<SpinLock>();
+    auto tree = this;
+    auto currentData = std::make_tuple<int, char *>(-1, nullptr);
 
-        delete leaf_child;
-        leaf_child = NULL;
-      } else {
-        index_child = new BIndexNode();
-        index_child->init_restore(this, block);
-        key = index_child->get_key_of_node();
+    using Tuple = std::tuple<int, BIndexNode *>;
+    const auto compare = [](const Tuple &a, const Tuple &b) {
+      return std::get<0>(a) > std::get<0>(b);
+    };
+    std::priority_queue<Tuple, std::vector<Tuple>, decltype(compare)> heap(
+        compare);
 
-        delete index_child;
-        index_child = NULL;
-      }
+    std::vector<std::thread> workerThreads;
 
-      if (!index_act_nd) {
-        index_act_nd = new BIndexNode();
-        index_act_nd->init(current_level, this);
+    auto composerThread = std::thread([=, &lock, &heap, &todoNodesCount,
+                                       &start_block, &end_block, &currentData] {
+      int loadedBlocksCount = 0;
+      int processedNodesCount = 0;
+      int lastIndex = -1;
+      int lastBlockIndex = last_end_block;
 
-        if (first_node) {
-          first_node = false;
-          start_block = index_act_nd->get_block();
-        } else {
-          index_act_nd->set_left_sibling(index_prev_nd->get_block());
-          index_prev_nd->set_right_sibling(index_act_nd->get_block());
+      while (processedNodesCount < todoNodesCount) {
+        const auto loadedCount =
+            std::min(nodeCapacity * 1000, totalBlocksCount - loadedBlocksCount);
+        loadedBlocksCount += loadedCount;
+        char *data = new char[tree->file_->get_blocklength() * loadedCount];
+        assert(tree->file_->read_blocks(data,
+                                        last_start_block + processedNodesCount,
+                                        loadedCount) == true);
+        lock->lock();
+        currentData = {loadedCount, data};
+        lock->unlock();
 
-          delete index_prev_nd;
-          index_prev_nd = NULL;
+        auto processedCountOfCurrentRun = 0;
+        const auto indexNodesCountOfCurrentRun =
+            (int)ceil((double)loadedCount / nodeCapacity);
+        while (processedCountOfCurrentRun < indexNodesCountOfCurrentRun) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+          lock->lock();
+          const auto heapSize = heap.size();
+          char *data = new char[heapSize * tree->file_->get_blocklength()];
+          bool isFirst = true;
+          int entryIndex = 0;
+          BIndexNode *prev;
+          while (!heap.empty()) {
+            auto [indexNodeIndex, indexNode] = heap.top();
+            if (indexNodeIndex != lastIndex + 1) {
+              break;
+            }
+            lastIndex = indexNodeIndex;
+            processedCountOfCurrentRun++;
+
+            if (isFirst) {
+              isFirst = false;
+              indexNode->set_block(lastBlockIndex + entryIndex + 1);
+              if (lastBlockIndex > last_end_block) {
+                indexNode->set_left_sibling(
+                    lastBlockIndex);  // 不是第一个 block，直接和上一个
+                                      // block 相连
+              } else {
+                start_block =
+                    indexNode->get_block();  // 这是这个索引层的第一个 block
+              }
+              prev = indexNode;
+            } else {
+              indexNode->set_block(lastBlockIndex + entryIndex + 1);
+              indexNode->set_left_sibling(prev->get_block());
+              prev->set_right_sibling(indexNode->get_block());
+              prev->write_to_buffer(data + (entryIndex - 1) *
+                                               tree->file_->get_blocklength());
+              delete prev;
+              prev = indexNode;
+            }
+
+            entryIndex++;
+            heap.pop();
+          }
+          lock->unlock();
+
+          if (!entryIndex) {
+            continue;
+          }
+
+          prev->set_block(lastBlockIndex + entryIndex);
+          end_block = prev->get_block();  // 更新 end_block 指针
+          if (processedNodesCount + processedCountOfCurrentRun <
+              todoNodesCount) {
+            prev->set_right_sibling(lastBlockIndex + entryIndex + 1);
+          }
+          prev->write_to_buffer(data + (entryIndex - 1) *
+                                           tree->file_->get_blocklength());
+          delete prev;
+          prev = nullptr;
+
+          // 这里写入的大小不是 heapSize 而是 entryIndex
+          lastBlockIndex =
+              tree->file_->write_blocks(data, entryIndex, lastBlockIndex);
+          delete[] data;
+          data = nullptr;
         }
-        end_block = index_act_nd->get_block();
-      }
-      index_act_nd->add_new_child(key, block);  // add new entry
 
-      if (index_act_nd->isFull()) {
-        index_prev_nd = index_act_nd;
-        index_act_nd = NULL;
+        // 这一轮读取结束
+        processedNodesCount += processedCountOfCurrentRun;
       }
+
+      lock->lock();
+      currentData = std::make_tuple<int, char *>(-1, nullptr);
+      lock->unlock();
+    });
+
+    for (int i = 0; i < workerThreadsCount; i++) {
+      workerThreads.emplace_back(std::thread(
+          [=, &currentData, &lock, &heap, &current_level, &end_block](int id) {
+            int blocksCountOfCurrentRun = -1;
+            char *data = nullptr;
+            while (true) {
+              while (true) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                lock->lock();
+                if (std::get<1>(currentData) != data) {
+                  if (data != nullptr && std::get<1>(currentData) == nullptr) {
+                    lock->unlock();
+                    return;
+                  }
+                  blocksCountOfCurrentRun = std::get<0>(currentData);
+                  data = std::get<1>(currentData);
+                  lock->unlock();
+                  break;
+                }
+                lock->unlock();
+              }
+
+              const auto indexNodesCountOfCurrentRun =
+                  (int)ceil((double)blocksCountOfCurrentRun / nodeCapacity);
+              const auto bound =
+                  indexNodesCountOfCurrentRun / workerThreadsCount;
+              for (int h = 0; h <= bound; h++) {
+                // 这个 index 是 composerThread 给的这一波 totalCount 个 block
+                // 数据里的相对顺序 接下来这个 workerThread
+                // 会算出自己应该处理哪一部分的block，构建出对应的 index node
+                auto indexNodeIndex = id + h * workerThreadsCount;
+                if (indexNodeIndex >= indexNodesCountOfCurrentRun) {
+                  continue;
+                }
+                auto indexNode = new BIndexNode();
+                indexNode->init_no_write(current_level, tree);
+                for (int k = 0; k < nodeCapacity; k++) {
+                  auto index = indexNodeIndex * nodeCapacity + k;
+                  if (index >= blocksCountOfCurrentRun) {
+                    break;
+                  }
+                  float key;
+                  auto block =
+                      start_block + index;  // 此时就已经可以知道 block 号了
+                  if (current_level == 1) {
+                    BLeafNode node;
+                    node.init_restore_in_place(
+                        tree, block,
+                        data + tree->file_->get_blocklength() * index);
+                    key = node.get_key_of_node();
+                  } else {
+                    BIndexNode node;
+                    node.init_restore_in_place(
+                        tree, block,
+                        data + tree->file_->get_blocklength() * index);
+                    key = node.get_key_of_node();
+                  }
+                  indexNode->add_new_child_no_dirty(key, block);
+                  if (k < nodeCapacity - 1) {
+                    assert(!indexNode->isFull());
+                  }
+                }
+                lock->lock();
+                heap.emplace(std::make_tuple(indexNodeIndex, indexNode));
+                lock->unlock();
+              }
+            }
+          },
+          i));
     }
-    if (index_prev_nd != NULL) {  // release the space
-      delete index_prev_nd;
-      index_prev_nd = NULL;
+
+    composerThread.join();
+    for (auto &thread : workerThreads) {
+      thread.join();
     }
-    if (index_act_nd != NULL) {
-      delete index_act_nd;
-      index_act_nd = NULL;
-    }
+
+    workerThreads.clear();
 
     last_start_block = start_block;  // update info
     last_end_block = end_block;      // build b-tree of higher level
     ++current_level;
   }
   root_ = last_start_block;  // update the <root>
-
-  if (index_prev_nd != NULL) delete index_prev_nd;
-  if (index_act_nd != NULL) delete index_act_nd;
-  if (index_child != NULL) delete index_child;
-  if (leaf_prev_nd != NULL) delete leaf_prev_nd;
-  if (leaf_act_nd != NULL) delete leaf_act_nd;
-  if (leaf_child != NULL) delete leaf_child;
 }
 
 // -----------------------------------------------------------------------------

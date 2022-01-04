@@ -146,6 +146,49 @@ void BIndexNode::init(				// init a new node, which not exist
 	delete[] blk; blk = NULL;
 }
 
+void BIndexNode::init_no_write(int level, BTree *btree) {
+  btree_ = btree;
+  level_ = (char)level;
+  num_entries_ = 0;
+  left_sibling_ = -1;
+  right_sibling_ = -1;
+  dirty_ = false;
+
+  // page size B
+  int b_length = btree_->file_->get_blocklength();
+  capacity_ = (b_length - get_header_size()) / get_entry_size();
+  if (capacity_ < 50) {  // ensure at least 50 entries
+    printf("capacity = %d, which is too small.\n", capacity_);
+    exit(1);
+  }
+
+  key_ = new float[capacity_];
+  son_ = new int[capacity_];
+  //分配内存
+  memset(key_, MINREAL, capacity_ * SIZEFLOAT);
+  memset(son_, -1, capacity_ * SIZEINT);
+}
+
+void BIndexNode::init_restore_in_place(BTree *btree, int block, Block data) {
+  btree_ = btree;
+  block_ = block;
+  dirty_ = false;
+
+  int b_len = btree_->file_->get_blocklength();
+  capacity_ = (b_len - get_header_size()) / get_entry_size();
+  if (capacity_ < 50) {
+    printf("capacity = %d, which is too small.\n", capacity_);
+    exit(1);
+  }
+
+  key_ = new float[capacity_];
+  son_ = new int[capacity_];
+  memset(key_, MINREAL, capacity_ * SIZEFLOAT);
+  memset(son_, -1, capacity_ * SIZEINT);
+
+  read_from_buffer(data);
+}
+
 // -----------------------------------------------------------------------------
 void BIndexNode::init_restore(		// load an exist node from disk to init
 	BTree *btree,						// b-tree of this node
@@ -270,6 +313,14 @@ void BIndexNode::add_new_child( // add a new entry from its child node
 	dirty_ = true;					// node modified, <dirty_> is true
 }
 
+void BIndexNode::add_new_child_no_dirty(
+	float key,
+	int   son)
+{
+	key_[num_entries_] = key;
+	son_[num_entries_] = son;
+	++num_entries_;
+}
 
 // -----------------------------------------------------------------------------
 //  BLeafNode: structure of leaf node in b-tree
@@ -335,6 +386,31 @@ void BLeafNode::init(				// init a new node, which not exist
 	}
 	id_ = new int[capacity_];
 	memset(id_, -1, capacity_ * SIZEINT);
+}
+
+void BLeafNode::init_restore_in_place(BTree *btree, int block, Block data) {
+  btree_ = btree;
+  block_ = block;
+  dirty_ = false;
+
+  int b_length = btree_->file_->get_blocklength();
+  int key_size = get_key_size(b_length);
+
+  key_ = new float[capacity_keys_];
+  memset(key_, MINREAL, capacity_keys_ * SIZEFLOAT);
+
+  int header_size = get_header_size();
+  int entry_size = get_entry_size();
+
+  capacity_ = (b_length - header_size - key_size) / entry_size;
+  if (capacity_ < 100) {
+    printf("capacity = %d, which is too small.\n", capacity_);
+    exit(1);
+  }
+  id_ = new int[capacity_];
+  memset(id_, -1, capacity_ * SIZEINT);
+
+  read_from_buffer(data);
 }
 
 // -----------------------------------------------------------------------------
