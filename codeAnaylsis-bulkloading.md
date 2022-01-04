@@ -219,9 +219,7 @@ public:
 
 - 第八步：释放所有指针的内存空间。
 
-`def.h`文件：
 
-定义了数学常量，如最大的整数值等。
 
 
 
@@ -231,19 +229,33 @@ public:
 
 
 
-`random.h`、`random.cc`文件：
+`make_data.cpp` 文件：
 
-- 基本的数学函数
+定义 Result 结构体记录数据
 
-
-
-`util.h`、`util.cc`文件：
-
-- 基本的时间函数
+- 并随机生成值，qsort 排序后，存入`data.csv`表格中。
 
 
 
-`make_data.cpp`文件：
+`def.h` 文件：
 
-- 制造Result结构体table，并随机生成值，qsort排序后，存入`data.csv`表格中。
+在 `def` 中使用宏命令声明了一些比较函数如 MIN，MAX，以及不同类型的数值的常量如 MAXREAL，MAXINT 以及自然底数 E 和圆周率 PI 等等，但其中 INT 类型的最小值以及 REAL 实数（FLOAT）类型的最小值定义有误，参照 C/C++ numeric limits 库中的宏命令，`INT_MIN = (-INT_MAX - 1)`，而 `FLT_MIN = 1.175494e-38`
+
+
+
+`random.h`、`random.cc` 文件：
+
+在 `random` 中声明了各类概率与统计学函数，用于生成随机数，如高斯分布、柯西分布、列维分布等等，以及各种分布的概率密度函数，相关系数等等统计学工具。
+
+
+
+`util.h`、`util.cc` 文件：
+
+在 `util` 中声明了时间变量 `g_start_time` 和 `g_start_time`，用于使用 Linux 中 `gettimeofday` 的时间函数记录起始时间、结束时间。
+
+并且声明了统计当前运行时间、基准真相、IO/内存占用的比率等全局变量，同时定义和声明了许多实用的函数，比如 `create_dir(char *path)` 创建文件目录，`int read_txt_data(int, int, const char*, float **)` 读取数据等等。
+
+综上，在 `util.h`、`util.cc` 文件中提供了各种使用的文件读写、统计时间、统计数据工具。
+
+
 
