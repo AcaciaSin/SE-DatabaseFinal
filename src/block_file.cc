@@ -180,7 +180,7 @@ bool BlockFile::read_block(			// read a <block> from <index>
 }
 
 bool BlockFile::read_blocks(char *data, int index, int n) {
-	index += n;
+	index++;
 	seek_block(index);
 
 	get_bytes(data, block_length_ * n);

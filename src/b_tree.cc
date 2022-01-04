@@ -238,20 +238,21 @@ void BTree::load_index_layers(int start_block, int end_block) {
   int last_start_block = start_block;  // build b-tree level by level
   int last_end_block = end_block;      // build b-tree level by level
 
-  // const auto workerThreadsCount = std::thread::hardware_concurrency() - 1;
-  const auto workerThreadsCount = 1;
+  const auto workerThreadsCount = std::thread::hardware_concurrency() - 1;
+  // const auto workerThreadsCount = 1;
   assert(workerThreadsCount >= 1);
   const auto headerSize = SIZECHAR + SIZEINT * 3;
   const auto entrySize = SIZEFLOAT + SIZEINT;
-  // 每一层需要扫描的 block 总数
-  const auto totalBlocksCount = last_end_block - last_start_block;
   // 一个 index node 的容量
   const auto nodeCapacity = (file_->get_blocklength() - headerSize) / entrySize;
-  // 每一层要构建的 index node 总数
-  const auto todoNodesCount =
-      (int)ceil((double)totalBlocksCount / nodeCapacity);
 
   while (last_end_block > last_start_block) {
+    // 这一层需要扫描的 block 总数
+    const auto totalBlocksCount = last_end_block - last_start_block + 1;
+    // 这一层要构建的 index node 总数
+    const auto todoNodesCount =
+        (int)ceil((double)totalBlocksCount / nodeCapacity);
+
     auto lock = std::make_unique<SpinLock>();
     auto tree = this;
     auto currentData = std::make_tuple<int, char *>(-1, nullptr);
@@ -274,7 +275,7 @@ void BTree::load_index_layers(int start_block, int end_block) {
 
       while (processedNodesCount < todoNodesCount) {
         const auto loadedCount =
-            std::min(nodeCapacity * 1000, totalBlocksCount - loadedBlocksCount);
+            std::min(nodeCapacity * 10000, totalBlocksCount - loadedBlocksCount);
         loadedBlocksCount += loadedCount;
         char *data = new char[tree->file_->get_blocklength() * loadedCount];
         assert(tree->file_->read_blocks(data,
