@@ -374,9 +374,6 @@ std::priority_queue<Tuple, std::vector<Tuple>, decltype(compare)> heap(
 
           prev->set_block(lastBlockIndex + entryIndex);
           end_block = prev->get_block();
-          if (end_block > n) {
-            throw;
-          }
           if (processedNodes < leafNodesCount) {
             prev->set_right_sibling(lastBlockIndex + entryIndex + 1);
           }
