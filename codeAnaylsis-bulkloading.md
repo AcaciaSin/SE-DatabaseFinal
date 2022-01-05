@@ -225,15 +225,19 @@ public:
 
 `pri_queue.h`、`pri_queue.cc`文件：
 
-- 定义了`Result`的结构体、`Mink_List`的结构体。其中Result时结果，其上的操作有：比较大小、插入，计算最大`key`值、最小`key`值等。
+在 `pri_queue` 中定义了基本的数据结构 `Result` 具有 `id_` 属性表示值，`key_` 表示键，以及用于比较数据的比较函数 ：`ResultComp` 升序比较函数和 `ResultCompeDesc` 降序比较函数。
+
+以及 `Mink_List` 数据结构维护最小 k 值，是近似最近邻检索算法 QALSH 中的数据结构。
+
+
 
 
 
 `make_data.cpp` 文件：
 
-定义 Result 结构体记录数据
+`make_data` 用于生成 B+ 树中的结点，其定义了 `Result` 结构体记录数据用于存储生成的数据，具有 `id_` 属性表示值，`key_` 表示键。
 
-- 并随机生成值，qsort 排序后，存入`data.csv`表格中。
+通过定义结点数与值得范围，使用 `random()` 生成随机数（`id_` 属性递增，`key_` 值随机），通过 `qsort()`  快速排序，按照 `key_` 升序排序，如果`key_` 相同则按照 `id_` 升序排序。最后使用 `ofstream` 输出文件流，将所有节点数据按照 `key_, id_` 格式存入 `data.csv` 文件。
 
 
 
