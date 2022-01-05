@@ -97,7 +97,7 @@
 - `init_restore(const char *fname)` 根据硬盘中的树文件加载一棵 B+ 树，初始化过程和 `init()` 类似
 
 - `load_root()` 和 `delete_root()` 分别对根节点加载和删除。
-- `bulkload(int n, const Result *table)` 串行地从数据集 `Result* table` 中批量地载入数据，并且构建 B+ 树。
+- `bulkload(int n, const Result *table)` 串行地从数据集 `Result* table` 中批量地载入数据，并且构建 B+ 树，将在后面讲解。
 
 ### 文件流与磁盘交互
 
@@ -159,75 +159,50 @@ LSH 的思想与哈希产生冲突类似，如果原始数据空间中的两个�
 
 
 
+## BulkLoad 过程
 
+BulkLoad 的整个过程在 `b_tree` 中 `int BTree:bulkload(int n, const Result *table)` 函数，从数据集 `table` 中构建 `n` 个结点的索引：
 
+### 构建叶子节点
 
+首先构建叶子节点存储数据集 `table` 中的所有 `key` 和 `value`，即下图中的循环，其中 `first_node`  标记表示当前叶子结点是否是第一个结点，`start_block` 和 `end_block` 表示当前叶子结点的 block 起始位置和结束位置：
 
-## 其中Bulkloading算法的具体过程如下：
+![image-20220105213708683](https://gitee.com/AdBean/img/raw/master/images/202201052137904.png)
 
-`int BTree:bulkload(int n, const Result *table)`函数：
+对数据集进行遍历：
 
-- 主要功能：从内存里批量构建一棵树，内存里面的数据是有序的数据
+- 如果**当前叶子结点不存在**，则**新建**一个叶子结点 `leaf_act_nod = new BLeafNode` 其中 `act_nd` 关键字表示**当前结点**，使用 `init(0, this)` 进行初始化并加入到当前 B+ 树中；
+  - 如果**当前新建的叶子节点**是 B+ 树当前**第一个叶子节点**，则设定 `start_block` 起始叶子结点的 block 位置为当前叶子结点的 block 号。
+  - 如果**当前新建的叶子节点**不是 B+ 树当前第一个叶子节点，则需要指定其左兄弟结点，即构建一个双向的链表，使用 `leaf_act_nd->set_left_sibling(leaf_prev_nd->get_block())` 设置当前结点左兄弟结点的 block 号为前一个叶子节点，使用 `leaf_prev_nd->set_right_sibling(leaf_act_nd->get_block())` 设置前一个结点的右兄弟结点的 block 号为当前叶子节点，随后释放前一个叶子结点指针。
+  - 最后，使用 `end_block` 记录当前叶子节点的最后一个 block 号。
+- 如果**当前叶子结点存在**，即数据**没有存满**当前叶子结点，则忽略中间的判断，进入下一步添加数据。
 
-- 第一步：定义需要用到的节点
+使用 `add_new_child(id, key)` 将数据加入到**当前叶子结点**中，如果当前叶子结点**已满**，则将**当前叶子结点指针**赋值给**前一个叶子结点指针** `leaf_prev_nd = leaf_act_nd`，同时将当前叶子节点指针指向空 `leaf_act_nd  NULL`，以在一下次遍历中**新建叶子结点**。
 
-  - index_child：索引节点的子节点
-  - index_prev_nd：索引节点的前n个节点
-  - index_act_nd：？
-  - leaf_child：叶子节点
-  - leaf_prev_nd：叶子节点的前n个节点
-  - leaf_act_nd ：
-  - id编号：初始化为-1
-  - block块号：初始化为-1
-  - key：初始化为最小实数
+### 构建索引节点
 
-- 第二步：使用哈希表批量构建叶子节点
+将所有数据存入并构建叶子节点后，释放掉使用过的指针 `leaf_prev_nd` 前一个叶子结点指针和 `leaf_act_nd` 当前叶子结点指针，获得构建完叶子节点后，当前最后一个叶子节点的起始 block 号 `last_start_block`，以及最后一个叶子结点的结尾 block 号 `last_end_block`，从第一层开始**自底向上**构建索引结点（叶子节点在第 0 层）：
 
-  - 首先把`first_node`的值初始化为`true`，第一个节点存储的开始block和结束block的编号初始化为0。
+![image-20220105221155938](https://gitee.com/AdBean/img/raw/master/images/202201052211266.png)
 
-- 第三步：进入for循环。for循环的次数是entry的数目。
+从**第一个叶子结点**的起始 block 和**最后一个叶子节点**的结束 block 开始遍历，即上一层的起始 block 为 `last_start_block` 和上一层的结束 block 为 `last_end_block`，自底向上构建索引层，直到 `last_end_block == last_start_block` 只剩一个block 即**根节点**。
 
-  - 首先把table（从data.csv加载的）的每一个键值对赋值给变量`id`和`key`。
+自底向上的过程中，又对 `last_start_block` 到 `last_end_block` 上一层结点中每个 block **正序遍历**（保证 key 索引值升序递增）构建索引结点：
 
-  - 如果`leaf_act_nd` 为空，则新构建一个`leaf_act_nd`，并初始化，定义层数为0，给予一个硬盘的空间。
+- 如果当前是叶子节点上一层（即 `current_level == 1`，**此时 block 号指向叶子节点**），初始化一个叶子节点指针 `leaf_child` 并使用 `init_restore(this, block)` 从当前 B+ 树以及 block 号从文件流中加载当前叶子节点，使用 `leaf_child->get_key_of_node` 获取叶子节点的第一个 key 值用作索引，并且释放 `leaf_child` 叶子结点指针。
+- 如果当前不是叶子结点上一层（即**当前 block 号指向索引结点**），初始化一个索引节点指针 `index_child` 并使用 `init_restore(this, block)` 从当前 B+ 树及 block 号从文件流加载当前所以索引节点，使用 `index_child->get_key_of_node()` 获得索引结点的第一个 key 值用作索引，并且释放 `index_child` 叶子结点指针。
 
-    然后判断`first_node`是否为true：如果为true则把`first_node`改为false，表明已经初始化好开始的`block`；否则，把新构建的叶子结点`leaf_act_nd`的左兄弟节点设置为`leaf_prev_nd`，`leaf_prev_nd`的右兄弟节点设置为`leaf_act_nd`。即把他们用双向链表的方式链接起来。随后删除`leaf_prev_nd`的指针，重新设置`leaf_prev_nd`为空指针。
+获得**索引值**之后，**构建索引结点**：
 
-    把结束的区块`end_block`设置为`leaf_act_nd`的当前区块。
+- 如果**当前索引节点** `index_act_nd` 为空，则使用 `index_act_nd = new BIndexNode()` 并且使用 `init(current_level, this)` 初始化当前层的索引结点：
+  - 如果当前索引节点是第一次创建，则记录其当前索引层第一个索引结点的起始 block 值 `start_block =index_act_nd->get_block() `
+  - 如果**上一个索引节点已满**，则当前索引结点**不是第一次创建**，需要将其连接**构建双向链表**，使用 `index_act_nd->set_left_sibling(index_prev_nd->get_block())` 设置**当前索引结点的左兄弟结点 block 号**为上一个索引节点，`index_prev_nd->set_right_sibling(index_act_nd->get_block())` 设置上一个索引结点的右兄弟结点的 block 号为当前索引节点，随后释放上一个索引节点指针。
+  - 最后，使用 `end_block` 记录当前索引节点的最后一个 block 号。
+- 如果**当前索引节点** `index_act_nd` 不为空，即没有装满数据，则忽略上述判断，进入下一步。
 
-  -  把table加载的一个键值对增为`leaf_act_nd`的儿子节点，即新增索引项。
+使用 `index_act_nd->add_new_child(key, block)` 将索引值 `key` 以及孩子节点的 block 号加入到当前索引结点中，与叶子节点的构建一样，如果当前索引节点已满，则需要将当前索引节点指针赋值给上一索引结点指针 `index_prev_nd = index_act_nd`，并且将**当前索引节点指针赋空** `index_act_nd = NULL`，以便下一次遍历创建新的索引节点。
 
-  - 如果`leaf_act_nd`的索引项已满，则把`leaf_act_nd`的前一个节点`leaf_prev_nd`指向`leaf_act_nd`，让`leaf_act_nd`为空指针。即更改当前节点，以继续新增entry。
+遍历完**上一层**所有结点的所有 block 号并构建索引节点后，释放 `index_prev_nd` 前一结点指针和 `index_act_nd` 当前结点指针，并且更新 `last_start_block` 上一层起始 block 号为当前层的起始 block，`last_end_block` 上一层的结束 block 号为当前层的结束 block，并且层数加一，表示**自底向上**构建索引节点。
 
-  - 退出for循环，完成所有底层叶子结点的构建。
-
-- 第四步：把`leaf_prev_nd`指针和`leaf_act_nd`指针空间释放并设置为空指针。
-
-- 第五步：为自底向上构建索引节点做准备。初始化`current_level`，即当前的层数，且我们认为叶子结点所在的层数为0。定义`last_start_block` 最后一个开始的块为内存中最开始块的块号`start_block`，`last_end_block`最后一个结束的块为内存中结束块的块号 `end_block`。
-
-- 第六步：进入while循环，while循环的结束条件为：最后一个结束的块与最后一个开始块的块号相同。
-
-  - 首先把`first_node`的值初始化为`true`。
-  - 进入for循环，for循环的次数为`last_end_block`块号- `last_start_block`块号的值。
-    - 让变量`block`的值为循环体`i`的值
-    - 如果当前层是叶子结点的上一层，即层数为1，如果是则：新构建一个`leaf_child`，并根据`block`的块号从内存中导入进来，并让其key值为`leaf_child`的key值。然后把`leaf_child`重新设置为空指针；否则，新构建一个`index_child`，并根据`block`的块号从内存中导入进来，并让其key值为`index_child`的key值。然后把`index_child`重新设置为空指针。
-    - 判断`index_act_nd`是否为空指针：如果不为空指针则：新构建一个`index_act_nd`，并根据`block`的块号从内存中导入进来。然后判断`first_node`的值：
-      - 如果为真，则改变其值为false，并修改`start_block`，让其值为`index_act_nd`的block的值
-      - 否则，把新构建的叶子结点`index_act_nd`的左兄弟节点设置为`index_prev_nd`，`index_prev_nd`的右兄弟节点设置为`index_act_nd`。即把他们用双向链表的方式链接起来。随后删除`index_prev_nd`的指针，重新设置`index_prev_nd`为空指针。
-      - 修改`end_block`，让其值为`index_act_nd`的block的值。
-    - 然后就可以往`index_act_nd`新增entry，该entry的`key`和`block`值索引节点的儿子节点的`key`和`block`值。
-    - 如果`index_act_nd`的索引项已满，则把`index_act_nd`的前一个节点`index_prev_nd`指向`index_act_nd`，让`leaf_act_nd`的值为空指针。即更改当前节点，以继续新增entry。
-    - 退出for循环。
-  - 把`index_prev_nd`指针和`index_act_nd`指针空间释放并设置为空指针。
-  - 更新`last_start_block`的值为新的`start_block`的值，` last_end_block` 为新的 `end_block`的值; 并增加层数。即继续往上层构建。直至退出while循环，此时构建完所有的索引节点。
-
-- 第七步：把`root_`根节点在硬盘中的地址修改为内存中最后一块block的起始编号。
-
-- 第八步：释放所有指针的内存空间。
-
-
-
-
-
-
+最终当 `start_block == end_block` 时，表示根节点层也构建完成，整棵 B+ 树就构建完成，BulkLoad 过程结束。
 
