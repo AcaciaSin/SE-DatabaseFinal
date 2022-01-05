@@ -253,7 +253,7 @@ Begin(worker线程开始运行) -->Init[初始化]
 
 - 由于是并发构建叶子结点，因此`fisrt_node`的位置是位于block块号1的位置，即：
 
-```c++
+```cpp
 int start_block = 1;     // position of first node, always be 1
 int end_block = 0;       // position of last node
 ```
@@ -262,7 +262,7 @@ int end_block = 0;       // position of last node
 
 - 首先，创建并发线程，创建的线程数目通过函数`std::thread::hardware_concurrency()	`产生，而这个函数会返回能并发在一个程序中的线程数量。断言认为线程数量大于等于1，并且新开一个线程池`workerThreads`。
 
-```c++
+```cpp
  const auto workerThreadsCount = std::thread::hardware_concurrency() - 1;
  assert(workerThreadsCount >= 1);
  std::vector<std::thread> workerThreads;
@@ -272,7 +272,7 @@ int end_block = 0;       // position of last node
 
 - 定义块头部的大小，key值空间的大小，entry的大小，树节点的容量，叶子结点的数量。并计算出在我们的设计思路中每个线程需要处理节点个数的理论平均值。
 
-```c++
+```cpp
 const auto headerSize = SIZECHAR + SIZEINT * 3;
 const auto keySize =
       ((int)ceil((float)file_->get_blocklength() / LEAF_NODE_SIZE) * SIZEFLOAT + SIZEINT);
@@ -287,7 +287,7 @@ const auto bound = leafNodesCount / workerThreadsCount;
 
 - 创建一个用于并发控制的锁`lock`，便于互斥操作或访问互斥区。同时，让tree指针指向this指针。
 
-```c++
+```cpp
 auto lock = std::make_unique<SpinLock>();
 auto tree = this;
 ```
@@ -296,7 +296,7 @@ auto tree = this;
 
 - 定义一种元组类型，其内包含两种数据类型，分别为`int`和`BLeafNode*`。创建了以该元组为元素的优先队列，排序方式为自定义的`compare`类型，构建小顶堆。
 
-```c++
+```cpp
 using Tuple = std::tuple<int, BLeafNode *>;
 const auto compare = [](const Tuple &a, const Tuple &b) {
     return std::get<0>(a) > std::get<0>(b);
@@ -318,7 +318,7 @@ std::priority_queue<Tuple, std::vector<Tuple>, decltype(compare)> heap(
   - 最后将若干个数量的节点一次性写入磁盘，即`lastBlockIndex = tree->file_->write_blocks(data, entryIndex, lastBlockIndex);`。
   - 释放内存空间。
 
-```c++
+```cpp
   auto consumerThread =
       std::thread([&lock, &heap, tree, &end_block, &leafNodesCount, n] {
         int processedNodes = 0;
@@ -403,7 +403,7 @@ Worker线程的工作：
   - 由于所有叶子结点都要通过小顶堆传送给`consumerThread`，`consumerThread`中需要取出小顶堆中的叶子结点，因此对小顶堆的操作是互斥操作。因此给其上锁。
 - 退出for循环时，所有叶子结点构建完成。
 
-```c++
+```cpp
 	for (int i = 0; i < workerThreadsCount; i++) {
     workerThreads.emplace_back(std::thread(
         [=, &lock, &heap](int id) {
@@ -439,7 +439,7 @@ Worker线程的工作：
 
 - 等待所有的线程运行完成，释放内存空间，进入索引节点的构建流程。
 
-```c++
+```cpp
 consumerThread.join();
 for (auto &thread : workerThreads) {
 	thread.join();
@@ -454,7 +454,7 @@ load_index_layers(start_block, end_block);
 
 - 初始化，因为是索引节点，因此此时的层数是从1开始，即令`current_level`为1。
 
-```c++
+```cpp
 int current_level = 1;               // current level (leaf level is 0)
 int last_start_block = start_block;  // build b-tree level by level
 int last_end_block = end_block;      // build b-tree level by level
@@ -464,7 +464,7 @@ int last_end_block = end_block;      // build b-tree level by level
 
 - 同叶子结点。
 
-```c++
+```cpp
 const auto workerThreadsCount = std::thread::hardware_concurrency() - 1;
 // const auto workerThreadsCount = 1;
 assert(workerThreadsCount >= 1);
@@ -480,7 +480,7 @@ const auto nodeCapacity = (file_->get_blocklength() - headerSize) / entrySize;
 
   - 在while循环内，首先计算出需要扫描的 block 总数和需要构建的 index node 总数。
 
-    ```c++
+    ```cpp
     // 这一层需要扫描的 block 总数
     const auto totalBlocksCount = last_end_block - last_start_block + 1;
     // 这一层要构建的 index node 总数
@@ -490,7 +490,7 @@ const auto nodeCapacity = (file_->get_blocklength() - headerSize) / entrySize;
 
   - 创建锁、元组tuple、线程等，同叶子结点。
 
-    ```c++
+    ```cpp
     auto lock = std::make_unique<SpinLock>();
         auto tree = this;
         auto currentData = std::make_tuple<int, char *>(-1, nullptr);
@@ -511,7 +511,7 @@ const auto nodeCapacity = (file_->get_blocklength() - headerSize) / entrySize;
 
   - 等待所有的线程运行完成，释放内存空间，更新信息，更新当前层数。
 
-    ```c++
+    ```cpp
         composerThread.join();
         for (auto &thread : workerThreads) {
           thread.join();
@@ -526,7 +526,7 @@ const auto nodeCapacity = (file_->get_blocklength() - headerSize) / entrySize;
 
 - 更新根节点。
 
-```c++
+```cpp
   root_ = last_start_block;  // update the <root>
 ```
 
@@ -550,7 +550,7 @@ const auto nodeCapacity = (file_->get_blocklength() - headerSize) / entrySize;
 
 - 在这个工程中，对小顶堆的操作需上锁，使用完需释放锁。
 
-```c++
+```cpp
     auto composerThread = std::thread([=, &lock, &heap, &todoNodesCount,
                                        &start_block, &end_block, &currentData] {
       int loadedBlocksCount = 0;
@@ -674,7 +674,7 @@ Worker线程的工作：
     - for循环内，首先计算出`workerThread`自身需要处理的`block`的部分，并据此构建出索引结点。
     - 新构建一个索引结点` indexNode = new BIndexNode()`，初始化，但是先不写入磁盘中。原因：索引节点在构建时需要获得儿子节点的 key，这就需要从磁盘读取信息。从整体来看，构建索引节点的过程会是多次的读—写—读循环，对硬盘的利用并不高效，因此我们修改了`b_node.h `和 `b_node.c`文件（对`BIndexNode`的类进行了修改）。如下所示，新增了函数。
 
-    ```c++
+    ```cpp
     	virtual void init_no_write(
     		int   level,
     		BTree *btree);
@@ -689,7 +689,7 @@ Worker线程的工作：
     		int son);
     ```
 
-    ```c++
+    ```cpp
     void BIndexNode::init_no_write(int level, BTree *btree) {
       btree_ = btree;
       level_ = (char)level;
@@ -717,7 +717,7 @@ Worker线程的工作：
     - 计算block号，其中block号为`start_block`的值与`index`的值的和。
     - 根据当前层数不同（因为如果层数为1，需要连接叶子结点；其余层数不需要），调用自己编写的`init_restore_in_place`函数，一次性顺序读取大量的儿子节点到内存中。
 
-    ```c++
+    ```cpp
     void BIndexNode::init_restore_in_place(BTree *btree, int block, Block data) {
       btree_ = btree;
       block_ = block;
@@ -741,7 +741,7 @@ Worker线程的工作：
 
     - 往当前索引节点增加儿子节点，使用自己编写的函数`add_new_child_no_dirty`。
 
-  ```c++
+  ```cpp
   void BIndexNode::add_new_child_no_dirty(
   	float key,
   	int   son)
@@ -756,7 +756,7 @@ Worker线程的工作：
 
 - 退出for循环时，所有索引结点构建完成。
 
-```c++
+```cpp
     for (int i = 0; i < workerThreadsCount; i++) {
       workerThreads.emplace_back(std::thread(
           [=, &currentData, &lock, &heap, &current_level, &end_block](int id) {
@@ -958,7 +958,7 @@ tree_file   = ./result/B_tree
 
 在设计思路中提到，每当一个叶子节点使用 `BLeafNode::init()` 进行初始化操作时，都会调用到 `BlockFile::append_block()` 方法。而从它的函数体中也可以看见每调用一次 `BlockFile::append_block()` 方法就需要进行两次 `fseek()` 以及一次 `fwrite_number()` 的操作，这些操作将会在 B+ 树的构建过程中产生大量的随机 IO。
 
-```c++
+```cpp
 /* 
 	block_file.cc 
 */
@@ -987,7 +987,7 @@ int BlockFile::append_block(		// append new block at the end of file
 
 首先修改 `BLeafNode::init()` 函数。直接将末尾处的 `BlockFile::append_block()`，即意味着当进行叶子节点的初始化操作时，将不再立即把当前叶子节点写入到硬盘中。在叶子节点的构建过程中，我们令 `consumerThread` 不停获取初始化完成的叶子节点，当叶子节点的数量占满一个块的时候才进行写出的操作。经过以上操作，即可成功地将大量的随机 IO 操作变为一次顺序 IO 操作。
 
-```c++
+```cpp
 /* 
 	b_node.cc 
 	改写 BLeafNode::init() 方法，使得初始化叶子节点不会进行写出操作
@@ -1028,7 +1028,7 @@ void BLeafNode::init(				// init a new node, which not exist
 }
 ```
 
-```c++
+```cpp
 /*
 	b_tree.cc
 	bulk_load() 中消费者线程进行写出操作
@@ -1042,7 +1042,7 @@ data = nullptr;
 
 同理，由于构建索引节点的思路和构建叶子节点相似。从代码中可知索引节点在进行初始化的时候同样会进行写出操作，这里同样为 `BIndexNode` 添加 `init_no_write())` 方法使得初始化的时候不进行写出操作。
 
-```c++
+```cpp
 /*
 	b_node.cc
 	为 BIndexNode 添加不进行写出操作的初始化方法
@@ -1073,7 +1073,7 @@ void BIndexNode::init_no_write(int level, BTree *btree) {
 
 在进行索引节点的构建过程中，我们需要使用到当前层数所对应的前一层节点，于是会使用到`init_restore()` 方法将前一层节点从硬盘中读取到内存进行构建的操作。从代码中不难发现 `BIndexNode::init_restore` 和 `BLeafNode::init_restore` 也存在着 IO 操作。由于我们的并行实现中将数据写入到了缓冲区中，当需要前一层节点的信息时，可以直接从缓冲区中读取数据。因此为 `BIndexNode` 和 `BLeafNode` 新增 `init_restore_in_place()` 方法，从缓冲区中读取数据，无需再进行 IO 操作。
 
-```c++
+```cpp
 /*
 	b_node.cc
 	一次读取整个索引节点块
@@ -1100,7 +1100,7 @@ void BIndexNode::init_restore_in_place(BTree *btree, int block, Block data) {
 
 ```
 
-```c++
+```cpp
 /* 
 	b_node.cc 
 	一次读取整个叶子节点块
