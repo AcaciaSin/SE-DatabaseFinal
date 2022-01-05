@@ -1,4 +1,4 @@
-# B+树bulkloading过程的理解
+# B+树 bulkloading 过程的理解
 
 - [x] 作业代码。
 - [ ] Readme文件，说明具体怎么运行代码，说明参数设置。
@@ -12,13 +12,13 @@
 - [ ] 性能调优、创新优化
 - [ ] 实验心得。（小组每个同学写一份，合在一个文档中）
 - [ ] 学者网提交作业。
-- [ ] ddl：2022年1月6日
+- [ ] ddl：2022 年 1 月 6 日 23:59:59
 
 
 
 ### 代码分析：
 
-`main.cc`文件：
+`main.cc`：
 
 - 26-34：第26行定义了字符数组`data_file `用于存储`dataset.csv`的文件路径，第27行第一了字符数组`tree_file`用于存储`Btree`的文件路径。随后打印出来
 
@@ -45,25 +45,49 @@
 
 
 
-`b_node.h`、`b_node.cc`文件：
+`b_node.h`、`b_node.cc`：
 
-- `b_node.h`文件内共有三个类，基本节点`BNode`，继承BNode的节点`BIndexNode`,继承BNode的节点`BLeafNode`。BNode的成员如下：
+`b_node.h` 定义了 B+ 树的结点基类 `BNode`，索引节点 `BIndexNode`，叶子结点 `BLeafNode`。
 
-```c++
-protected:
-	char  level_;					// level of b-tree (level > 0)
-	int   num_entries_;				// number of entries in this node
-	int   left_sibling_;			// addr in disk for left  sibling
-	int   right_sibling_;			// addr in disk for right sibling
-	float *key_;					// keys
+`BNode` 结点作为基础类，具有基础属性：
 
-	bool  dirty_;					// if dirty, write back to file
-	int   block_;					// addr of disk for this node
-	int   capacity_;				// max num of entries can be stored
-	BTree *btree_;					// b-tree of this node
-```
+- 表示当前结点层数 `level_`
 
-`BIndexNode`增加了成员(树的索引节点)：
+- 当前结点数据数量 `num_entries_`
+
+- 兄弟节点的地址 `left_sibling_` 和 `right_sibling_`
+
+- 键值数组 `key_`
+
+- 是否脏写标志 `dirty_`
+
+- 当前结点的硬盘地址 `block_`
+
+- 结点最大数据容量 `capacity_` 
+
+- 当前结点的 B+ 树  `BTree* btree_`
+
+  
+
+除了构造函数和析构函数外，还具有基础虚函数，用于在派生类实现：
+
+- `init(int level, Btree *btree)` 在 B 树的一层中初始化结点。
+- `init_restore(BTree *btree, int block)` 从文件中初始化一颗 B 树。
+- `write_to_buffer(char *buf)` 和 `read_from_buffer(char *buf)` 用于在缓冲区读写。
+- `get_entry_size()` 获得当前结点数据大小。
+- `find_position_by_key(float key)` 通过键值查找数据位置。
+- `get_key(int index)` 通过下标访问键值数组 `key_` 中的数据。
+- `get_left_sibling()` 和 `get_right_sibling` 访问左右兄弟结点以及 `set_left_sibling(int l)` 和 `set_right_sibling(int r)` 设置左右兄弟结点的地址。
+- `get_block()` 获得当前硬盘地址，` set_block(int *block)` 设置当前结点硬盘地址。
+- `get_num_entries()` 获取当前结点的数据数量。
+- `get_level()` 获取当前结点在 B+ 树的高度。
+- `isFull()` 判断当前结点数据是否超出了容量。
+- `get_header_size()` 获取 B+ 树结点的头部大小 SIZECHAR + SIZEINT * 3，即层数 CHAR ，左右兄弟节点地址以及当前结点数据数量。
+- `get_key_of_node()` 返回当前结点键值数组种的第一个 `key` 
+
+
+
+`BIndexNode` 继承 `BNode` 基础结点类，增加了成员(树的索引节点)：
 
 ```c++
 protected:
@@ -79,18 +103,8 @@ protected:
 	int capacity_keys_;				// max num of keys can be stored
 ```
 
-- `BNode`类型的节点，能做的操作有：
-  - 读/写buffer
-  - 获得`entry`索引项的大小
-  - 根据`key`的值查找位置
-  - 根据`index`的值查找`key`
-  - 返回左右节点。
-  - 获取Block
-  - 获取entries的数目
-  - 返回层数level
-  - 返回header的大小
-  - 返回节点的key值
-  - 判断索引项entry是否已经满了。
+
+
 - `BIndexNode`类型的节点，继承了`BNode`类型的节点，增加了
     - ` get_son(int index)`获得孩子的index值函数
     - `add_new_child(float key, int son)`根据给定的编号`id`和key值新增孩子节点的函数。
@@ -104,7 +118,7 @@ protected:
 
 
 
-`block_file.h`，`block_file.cc`文件：
+`block_file.h`，`block_file.cc`：
 
 - `BlockFile`是b-tree读写文件的结构。`BlockFile`包括了文件指针`fp`，文件名`fname`，`new_flag_`，块的长度，fp位置的块数，总的块数
 
@@ -137,7 +151,7 @@ public:
 
 
 
-`b_tree.h`，`b_tree.cc`文件：
+`b_tree.h`，`b_tree.cc`：
 
 - `BTree`是对qalsh生成的哈希表进行索引的一棵树，其数据成员有：根节点`root`，指向根节点的指针，以及存储在硬盘里面的`BlockFile`类型的文件`file_`
 
@@ -157,7 +171,7 @@ public:
   - 加载根节点：`load_root()`
   - 删除根节点：`delete_root()`
 
-##### 其中Bulkloading算法的具体过程如下：
+### 其中Bulkloading算法的具体过程如下：
 
 `int BTree:bulkload(int n, const Result *table)`函数：
 
@@ -223,17 +237,15 @@ public:
 
 
 
-`pri_queue.h`、`pri_queue.cc`文件：
+`pri_queue.h`、`pri_queue.cc`：
 
 在 `pri_queue` 中定义了基本的数据结构 `Result` 具有 `id_` 属性表示值，`key_` 表示键，以及用于比较数据的比较函数 ：`ResultComp` 升序比较函数和 `ResultCompeDesc` 降序比较函数。
 
-以及 `Mink_List` 数据结构维护最小 k 值，是近似最近邻检索算法 QALSH 中的数据结构。
+以及 `Mink_List` 数据结构维护最小 k 值，是近似最近邻检索算法 QALSH 中的数据结构，用于存储和查找 K 近邻，具有获取当前最大值，最小值以及第 i 个值等查询函数和插入函数，其具有 `k` 个数据，当前 `num` 个激活数据，以及 `Result *` 链表数组。
 
+ 
 
-
-
-
-`make_data.cpp` 文件：
+`make_data.cpp`：
 
 `make_data` 用于生成 B+ 树中的结点，其定义了 `Result` 结构体记录数据用于存储生成的数据，具有 `id_` 属性表示值，`key_` 表示键。
 
@@ -241,19 +253,19 @@ public:
 
 
 
-`def.h` 文件：
+`def.h`：
 
 在 `def` 中使用宏命令声明了一些比较函数如 MIN，MAX，以及不同类型的数值的常量如 MAXREAL，MAXINT 以及自然底数 E 和圆周率 PI 等等，但其中 INT 类型的最小值以及 REAL 实数（FLOAT）类型的最小值定义有误，参照 C/C++ numeric limits 库中的宏命令，`INT_MIN = (-INT_MAX - 1)`，而 `FLT_MIN = 1.175494e-38`
 
 
 
-`random.h`、`random.cc` 文件：
+`random.h`、`random.cc` ：
 
 在 `random` 中声明了各类概率与统计学函数，用于生成随机数，如高斯分布、柯西分布、列维分布等等，以及各种分布的概率密度函数，相关系数等等统计学工具。
 
 
 
-`util.h`、`util.cc` 文件：
+`util.h`、`util.cc`：
 
 在 `util` 中声明了时间变量 `g_start_time` 和 `g_start_time`，用于使用 Linux 中 `gettimeofday` 的时间函数记录起始时间、结束时间。
 
