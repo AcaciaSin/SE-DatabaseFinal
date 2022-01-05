@@ -887,6 +887,8 @@ tree_file   = ./result/B_tree
 
 在将索引节点也进行并行化之后，多次对 `data/dataset.csv` 针对不同规模的测试数据集运行原本的程序以及修改后的程序，得到的加速比情况如下：
 
+![speed_up_ratio](.\report\speed_up_ratio.png)
+
 
 ### 六、实验分析
 
