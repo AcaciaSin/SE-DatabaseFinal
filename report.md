@@ -158,6 +158,180 @@ tree_file   = ./result/B_tree
 
 对比串行和并行代码得到的 B 树二进制文件，`diff` 程序仅输出了上面的不同。可以看到，这几行都是位于文件的末尾，且根据 `b_node.cc` 中相关数据结构的定义，我们发现它们都没有代表实际数据（也就是 block 中的闲置位），两个代码中的这些位在使用 `new char[]` 也即 `malloc()` 之后并没有进行清零，所以导致了输出的不一致。排除掉此因素之后，我们认为二者输出的文件是一致的。
 
-### 性能调优
+### 性能调优、创新优化
 
-### 创新优化
+在设计思路中提到，每当一个叶子节点使用 `BLeafNode::init()` 进行初始化操作时，都会调用到 `BlockFile::append_block()` 方法。而从它的函数体中也可以看见每调用一次 `BlockFile::append_block()` 方法就需要进行两次 `fseek()` 以及一次 `fwrite_number()` 的操作，这些操作将会在 B+ 树的构建过程中产生大量的随机 IO。
+
+```c++
+/* 
+	block_file.cc 
+*/
+int BlockFile::append_block(		// append new block at the end of file
+	Block block)						// the new block
+{
+	fseek(fp_, 0, SEEK_END);		// <fp_> point to the end of file
+	put_bytes(block, block_length_);// write a <block>
+	++num_blocks_;					// add 1 to <num_blocks_>
+	
+	fseek(fp_, SIZEINT, SEEK_SET);	// <fp_> point to pos of header
+	fwrite_number(num_blocks_);		// update <num_blocks_>
+
+	// -------------------------------------------------------------------------
+	//  <fp_> point to the pos of new added block. 
+	//  the equation <act_block_> = <num_blocks_> indicates the file pointer 
+	//  point to new added block.
+	//  return index of new added block
+	// -------------------------------------------------------------------------
+	fseek(fp_, -block_length_, SEEK_END);
+	return (act_block_ = num_blocks_) - 1;
+}
+```
+
+对于固态硬盘来说，随机 IO 所带来的影响并不会特别的明显，但对于机械硬盘来说，大量的随机 IO 也就意味着大量的时间将会被浪费用于定位目标页所在的位置，从而造成严重的性能损失。像数据库这种需要大容量数据存储的服务，相对便宜的机械硬盘才是主力存储设备。考虑机械硬盘顺序 IO 比随机 IO 速度快的特性，我们决定将上述的操作进行修改与优化。
+
+首先修改 `BLeafNode::init()` 函数。直接将末尾处的 `BlockFile::append_block()`，即意味着当进行叶子节点的初始化操作时，将不再立即把当前叶子节点写入到硬盘中。在叶子节点的构建过程中，我们令 `consumerThread` 不停获取初始化完成的叶子节点，当叶子节点的数量占满一个块的时候才进行写出的操作。经过以上操作，即可成功地将大量的随机 IO 操作变为一次顺序 IO 操作。
+
+```c++
+/* 
+	b_node.cc 
+	改写 BLeafNode::init() 方法，使得初始化叶子节点不会进行写出操作
+*/
+void BLeafNode::init(				// init a new node, which not exist
+	int   level,						// level (depth) in b-tree
+	BTree *btree)						// b-tree of this node
+{
+	btree_         = btree;
+	level_         = (char) level;
+
+	num_entries_   = 0;
+	num_keys_      = 0;
+	left_sibling_  = -1;
+	right_sibling_ = -1;
+	dirty_         = true;
+
+	// -------------------------------------------------------------------------
+	//  init <capacity_keys_> and calc key size
+	// -------------------------------------------------------------------------
+	//page size B
+	int b_length = btree_->file_->get_blocklength();
+	int key_size = get_key_size(b_length);
+
+	key_ = new float[capacity_keys_];
+	memset(key_, MINREAL, capacity_keys_ * SIZEFLOAT);
+	
+	int header_size = get_header_size();
+	int entry_size = get_entry_size();
+
+	capacity_ = (b_length - header_size - key_size) / entry_size;
+	if (capacity_ < 100) {			// at least 100 entries
+		printf("capacity = %d, which is too small.\n", capacity_);
+		exit(1);
+	}
+	id_ = new int[capacity_];
+	memset(id_, -1, capacity_ * SIZEINT);
+}
+```
+
+```c++
+/*
+	b_tree.cc
+	bulk_load() 中消费者线程进行写出操作
+*/
+
+lastBlockIndex =
+  tree->file_->write_blocks(data, entryIndex, lastBlockIndex);
+delete[] data;
+data = nullptr;
+```
+
+同理，由于构建索引节点的思路和构建叶子节点相似。从代码中可知索引节点在进行初始化的时候同样会进行写出操作，这里同样为 `BIndexNode` 添加 `init_no_write())` 方法使得初始化的时候不进行写出操作。
+
+```c++
+/*
+	b_node.cc
+	为 BIndexNode 添加不进行写出操作的初始化方法
+*/
+void BIndexNode::init_no_write(int level, BTree *btree) {
+  btree_ = btree;
+  level_ = (char)level;
+  num_entries_ = 0;
+  left_sibling_ = -1;
+  right_sibling_ = -1;
+  dirty_ = false;
+
+  // page size B
+  int b_length = btree_->file_->get_blocklength();
+  capacity_ = (b_length - get_header_size()) / get_entry_size();
+  if (capacity_ < 50) {  // ensure at least 50 entries
+    printf("capacity = %d, which is too small.\n", capacity_);
+    exit(1);
+  }
+
+  key_ = new float[capacity_];
+  son_ = new int[capacity_];
+  //分配内存
+  memset(key_, MINREAL, capacity_ * SIZEFLOAT);
+  memset(son_, -1, capacity_ * SIZEINT);
+}
+```
+
+在进行索引节点的构建过程中，我们需要使用到当前层数所对应的前一层节点，于是会使用到`init_restore()` 方法将前一层节点从硬盘中读取到内存进行构建的操作。从代码中不难发现 `BIndexNode::init_restore` 和 `BLeafNode::init_restore` 也存在着 IO 操作。由于我们的并行实现中将数据写入到了缓冲区中，当需要前一层节点的信息时，可以直接从缓冲区中读取数据。因此为 `BIndexNode` 和 `BLeafNode` 新增 `init_restore_in_place()` 方法，从缓冲区中读取数据，无需再进行 IO 操作。
+
+```c++
+/*
+	b_node.cc
+	一次读取整个索引节点块
+*/
+void BIndexNode::init_restore_in_place(BTree *btree, int block, Block data) {
+  btree_ = btree;
+  block_ = block;
+  dirty_ = false;
+
+  int b_len = btree_->file_->get_blocklength();
+  capacity_ = (b_len - get_header_size()) / get_entry_size();
+  if (capacity_ < 50) {
+    printf("capacity = %d, which is too small.\n", capacity_);
+    exit(1);
+  }
+
+  key_ = new float[capacity_];
+  son_ = new int[capacity_];
+  memset(key_, MINREAL, capacity_ * SIZEFLOAT);
+  memset(son_, -1, capacity_ * SIZEINT);
+
+  read_from_buffer(data);
+}
+
+```
+
+```c++
+/* 
+	b_node.cc 
+	一次读取整个叶子节点块
+*/
+void BLeafNode::init_restore_in_place(BTree *btree, int block, Block data) {
+  btree_ = btree;
+  block_ = block;
+  dirty_ = false;
+
+  int b_length = btree_->file_->get_blocklength();
+  int key_size = get_key_size(b_length);
+
+  key_ = new float[capacity_keys_];
+  memset(key_, MINREAL, capacity_keys_ * SIZEFLOAT);
+
+  int header_size = get_header_size();
+  int entry_size = get_entry_size();
+
+  capacity_ = (b_length - header_size - key_size) / entry_size;
+  if (capacity_ < 100) {
+    printf("capacity = %d, which is too small.\n", capacity_);
+    exit(1);
+  }
+  id_ = new int[capacity_];
+  memset(id_, -1, capacity_ * SIZEINT);
+
+  read_from_buffer(data);
+}
+```
+
