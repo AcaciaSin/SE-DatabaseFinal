@@ -5,12 +5,12 @@
 - Ubuntu 20.04 gcc version 9.3.0
   - 编译选项：`g++ -std=c++2a -g -pthread -w`
 
-- Ubuntu 21.10 gcc version 
+- Ubuntu 21.10 gcc version 11.2.0
   - 编译选项：`g++ -std=c++20 -g -w`
 
 
 
-所有代码处于当前根目录下的 `./src`，编译命令参照 `Makefile`，在根目录运行，构建的 B+ 树数据在 `./data/dataset.csv`，结果在当前根目录下 `./result/B_tree`。
+所有代码处于当前根目录下的 `./src`，编译命令参照 `./src/Makefile`，在根目录运行，构建的 B+ 树数据在 `./data/dataset.csv`，结果在当前根目录下 `./result/B_tree`。
 
 ## 运行说明：
 
