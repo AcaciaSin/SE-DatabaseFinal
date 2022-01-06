@@ -168,7 +168,7 @@ BulkLoad 的整个过程在 `b_tree` 中 `int BTree:bulkload(int n, const Result
 
 首先构建叶子节点存储数据集 `table` 中的所有 `key` 和 `value`，即下图中的循环，其中 `first_node`  标记表示当前叶子结点是否是第一个结点，`start_block` 和 `end_block` 表示当前叶子结点的 block 起始位置和结束位置：
 
-![image-20220105213708683](https://gitee.com/AdBean/img/raw/master/images/202201052137904.png)
+
 
 对数据集进行遍历：
 
