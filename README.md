@@ -28,4 +28,5 @@ cd ../
 
 ## 运行结果：
 
-![image-20220106151020805](https://gitee.com/AdBean/img/raw/master/images/202201061510535.png)
+![image-20220106153038782](https://gitee.com/mxdam/show-pic/raw/master/pic/lab11/image-20220106153038782.png)
+
